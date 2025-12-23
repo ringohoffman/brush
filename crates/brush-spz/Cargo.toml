@@ -1,0 +1,20 @@
+[package]
+name = "brush-spz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+brush-render = { path = "../brush-render" }
+burn = { workspace = true, features = ["ndarray"] }
+burn-cubecl = { workspace = true }
+glam = { workspace = true }
+flate2 = "1.0"
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+byteorder = "1.5"
+log = { workspace = true }
+
+[dev-dependencies]
+brush-serde = { path = "../brush-serde" }
+burn-wgpu = { workspace = true }
+

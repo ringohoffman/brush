@@ -23,11 +23,11 @@ pub struct ProcessConfig {
     /// This path can be set as a relative path.
     #[arg(long, help_heading = "Process options", default_value = "./")]
     pub export_path: String,
-    /// Filename of exported ply file
+    /// Filename of exported ply or spz file
     #[arg(
         long,
         help_heading = "Process options",
-        default_value = "export_{iter}.ply"
+        default_value = "export_{iter}.spz"
     )]
     pub export_name: String,
 }

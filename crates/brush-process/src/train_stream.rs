@@ -334,12 +334,18 @@ async fn export_checkpoint(
         .with_context(|| format!("Creating export directory {}", export_path.display()))?;
     let digits = ((total_steps as f64).log10().floor() as usize) + 1;
     let export_name = export_name.replace("{iter}", &format!("{iter:0digits$}"));
-    let splat_data = brush_serde::splat_to_ply(splats)
-        .await
-        .context("Serializing splat data")?;
+    let splat_data = if export_name.ends_with(".spz") {
+        brush_spz::splat_to_spz(splats)
+            .await
+            .context("Serializing splat data to spz")?
+    } else {
+        brush_serde::splat_to_ply(splats)
+            .await
+            .context("Serializing splat data to ply")?
+    };
     tokio::fs::write(export_path.join(&export_name), splat_data)
         .await
-        .context(format!("Failed to export ply {export_path:?}"))?;
+        .context(format!("Failed to export {export_name} to {export_path:?}"))?;
     Ok(())
 }
 

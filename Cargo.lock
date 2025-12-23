@@ -1140,6 +1140,7 @@ dependencies = [
  "brush-render",
  "brush-rerun",
  "brush-serde",
+ "brush-spz",
  "brush-train",
  "brush-vfs",
  "burn",
@@ -1250,6 +1251,23 @@ dependencies = [
  "bytemuck",
  "rand 0.9.2",
  "tracing",
+]
+
+[[package]]
+name = "brush-spz"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brush-render",
+ "brush-serde",
+ "burn",
+ "burn-cubecl",
+ "burn-wgpu",
+ "byteorder",
+ "flate2",
+ "glam",
+ "log",
+ "tokio",
 ]
 
 [[package]]
@@ -9544,6 +9562,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",

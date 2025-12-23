@@ -14,6 +14,7 @@ members = [
     "crates/brush-serde",
     "crates/brush-serde-macros",
     "crates/brush-sort",
+    "crates/brush-spz",
     "crates/brush-train",
     "crates/brush-ui",
     "crates/brush-vfs",
