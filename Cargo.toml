@@ -13,6 +13,7 @@ members = [
     "crates/brush-rerun",
     "crates/brush-serde",
     "crates/brush-serde-macros",
+    "crates/brush-sh-utils",
     "crates/brush-sort",
     "crates/brush-spz",
     "crates/brush-train",

@@ -48,6 +48,13 @@ impl AppPane for SettingsPanel {
             ProcessMessage::TrainMessage(msg) => {
                 self.training.on_train_message(msg);
             }
+            #[cfg(feature = "training")]
+            ProcessMessage::ViewSplats { up_axis, .. } => {
+                // Capture the up_axis for use in manual exports
+                if let Some(up) = up_axis {
+                    self.training.set_up_axis(*up);
+                }
+            }
             _ => {}
         }
     }

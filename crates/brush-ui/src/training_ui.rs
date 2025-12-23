@@ -260,6 +260,8 @@ pub struct TrainingState {
     train_config: Option<TrainStreamConfig>,
     manual_export_iters: Vec<u32>,
     current_splats: Option<Splats<MainBackend>>,
+    /// The estimated up axis for the scene, used for export orientation
+    up_axis: Option<glam::Vec3>,
     export_channel: (UnboundedSender<Error>, UnboundedReceiver<Error>),
 }
 
@@ -274,6 +276,7 @@ impl TrainingState {
             manual_export_iters: Vec::new(),
             popup: None,
             current_splats: None,
+            up_axis: None,
             export_channel: tokio::sync::mpsc::unbounded_channel(),
         }
     }
@@ -286,6 +289,12 @@ impl TrainingState {
         self.train_config = None;
         self.manual_export_iters.clear();
         self.current_splats = None;
+        self.up_axis = None;
+    }
+
+    /// Set the up axis for export orientation
+    pub fn set_up_axis(&mut self, up_axis: glam::Vec3) {
+        self.up_axis = Some(up_axis);
     }
 
     pub fn on_train_message(&mut self, message: &TrainMessage) {
@@ -335,8 +344,8 @@ impl Default for TrainingState {
     }
 }
 
-async fn export(splat: Splats<MainBackend>) -> Result<(), Error> {
-    let data = brush_serde::splat_to_ply(splat).await?;
+async fn export(splat: Splats<MainBackend>, up_axis: Option<glam::Vec3>) -> Result<(), Error> {
+    let data = brush_serde::splat_to_ply(splat, up_axis).await?;
     rrfd::save_file("export.ply", data).await?;
     Ok(())
 }
@@ -420,8 +429,9 @@ pub fn draw_training_progress(ui: &mut egui::Ui, state: &mut TrainingState, proc
                 state.manual_export_iters.push(iter);
                 let sender = state.export_channel.0.clone();
                 let ctx = ui.ctx().clone();
+                let up_axis = state.up_axis;
                 tokio_with_wasm::alias::task::spawn(async move {
-                    if let Err(e) = export(splats).await {
+                    if let Err(e) = export(splats, up_axis).await {
                         let _ = sender.send(e);
                         ctx.request_repaint();
                     }

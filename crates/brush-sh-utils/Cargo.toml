@@ -1,0 +1,16 @@
+[package]
+name = "brush-sh-utils"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"
+
+[[bin]]
+name = "sh_rotation_bench"
+path = "src/bin/sh_rotation_bench.rs"

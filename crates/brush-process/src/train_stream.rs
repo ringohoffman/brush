@@ -206,6 +206,7 @@ pub(crate) async fn train_stream(
                 &process_config.export_name,
                 iter,
                 train_stream_args.train_config.total_steps,
+                estimated_up,
             )
             .await
             .with_context(|| format!("Export at iteration {iter} failed"));
@@ -328,6 +329,7 @@ async fn export_checkpoint(
     export_name: &str,
     iter: u32,
     total_steps: u32,
+    up_axis: glam::Vec3,
 ) -> Result<(), anyhow::Error> {
     tokio::fs::create_dir_all(&export_path)
         .await
@@ -335,11 +337,11 @@ async fn export_checkpoint(
     let digits = ((total_steps as f64).log10().floor() as usize) + 1;
     let export_name = export_name.replace("{iter}", &format!("{iter:0digits$}"));
     let splat_data = if export_name.ends_with(".spz") {
-        brush_spz::splat_to_spz(splats)
+        brush_spz::splat_to_spz(splats, Some(up_axis))
             .await
             .context("Serializing splat data to spz")?
     } else {
-        brush_serde::splat_to_ply(splats)
+        brush_serde::splat_to_ply(splats, Some(up_axis))
             .await
             .context("Serializing splat data to ply")?
     };

@@ -218,6 +218,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
+name = "approx"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1218,6 +1227,7 @@ dependencies = [
  "async-fn-stream",
  "brush-render",
  "brush-serde-macros",
+ "brush-sh-utils",
  "brush-vfs",
  "burn",
  "burn-cubecl",
@@ -1240,6 +1250,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-sh-utils"
+version = "0.3.0"
+dependencies = [
+ "approx",
+ "glam",
+]
+
+[[package]]
 name = "brush-sort"
 version = "0.3.0"
 dependencies = [
@@ -1255,11 +1273,12 @@ dependencies = [
 
 [[package]]
 name = "brush-spz"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "brush-render",
  "brush-serde",
+ "brush-sh-utils",
  "burn",
  "burn-cubecl",
  "burn-wgpu",

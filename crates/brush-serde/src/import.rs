@@ -532,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn test_import_basic_functionality() {
         let original_splats = create_test_splats(1);
-        let ply_bytes = splat_to_ply(original_splats.clone()).await.unwrap();
+        let ply_bytes = splat_to_ply(original_splats.clone(), None).await.unwrap();
 
         let cursor = Cursor::new(ply_bytes);
         let imported_message = load_splat_from_ply(cursor, None).await.unwrap();
@@ -550,7 +550,7 @@ mod tests {
     async fn test_import_different_sh_degrees() {
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
-            let ply_bytes = splat_to_ply(original_splats).await.unwrap();
+            let ply_bytes = splat_to_ply(original_splats, None).await.unwrap();
 
             let cursor = Cursor::new(ply_bytes);
             let imported_message = load_splat_from_ply(cursor, None).await.unwrap();
@@ -568,7 +568,7 @@ mod tests {
         let original_splats = create_test_splats_with_count(0, 4);
         assert_eq!(original_splats.num_splats(), 4);
 
-        let ply_bytes = splat_to_ply(original_splats).await.unwrap();
+        let ply_bytes = splat_to_ply(original_splats, None).await.unwrap();
 
         // Test no subsampling
         let cursor = Cursor::new(ply_bytes.clone());

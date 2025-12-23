@@ -1,4 +1,5 @@
 use brush_render::gaussian_splats::Splats;
+use brush_sh_utils::rotate_sh_coefficients_interleaved_in_place;
 use burn::prelude::Backend;
 use burn::tensor::Transaction;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -125,11 +126,53 @@ fn sh_rest_dim_for_degree(degree: u32) -> usize {
     }
 }
 
-pub async fn splat_to_spz<B: Backend>(splats: Splats<B>) -> anyhow::Result<Vec<u8>> {
+/// Computes the rotation quaternion that transforms the scene so the given up_axis
+/// becomes aligned with the Y-up axis (positive Y = up, standard for most viewers).
+/// This rotates the scene's up direction to match the viewer's expected up.
+fn up_axis_to_rotation(up_axis: glam::Vec3) -> glam::Quat {
+    glam::Quat::from_rotation_arc(glam::Vec3::Y, up_axis.normalize())
+}
+
+/// Transform raw position data by a rotation quaternion.
+/// `means` is a flat array of [x, y, z, x, y, z, ...]
+fn transform_positions(means: &mut [f32], rotation: glam::Quat) {
+    for chunk in means.chunks_exact_mut(3) {
+        let pos = glam::Vec3::new(chunk[0], chunk[1], chunk[2]);
+        let rotated = rotation * pos;
+        chunk[0] = rotated.x;
+        chunk[1] = rotated.y;
+        chunk[2] = rotated.z;
+    }
+}
+
+/// Transform raw quaternion rotation data by a rotation quaternion.
+/// `rotations` is a flat array of [w, x, y, z, w, x, y, z, ...] (brush format)
+fn transform_rotations(rotations: &mut [f32], rotation: glam::Quat) {
+    for chunk in rotations.chunks_exact_mut(4) {
+        // Brush stores quaternions as [w, x, y, z]
+        let q = glam::Quat::from_xyzw(chunk[1], chunk[2], chunk[3], chunk[0]);
+        let rotated = rotation * q;
+        chunk[0] = rotated.w;
+        chunk[1] = rotated.x;
+        chunk[2] = rotated.y;
+        chunk[3] = rotated.z;
+    }
+}
+
+/// Export splats to SPZ format.
+///
+/// If `up_axis` is provided, the splat will be rotated so that the given up direction
+/// aligns with the Y-up axis. This makes the exported splat appear "upright" in viewers
+/// that use Y-up conventions. SH coefficients are rotated using Wigner D-matrices to
+/// maintain correct view-dependent effects after the orientation transform.
+pub async fn splat_to_spz<B: Backend>(
+    splats: Splats<B>,
+    up_axis: Option<glam::Vec3>,
+) -> anyhow::Result<Vec<u8>> {
     let sh_degree = splats.sh_degree();
     let num_points = splats.num_splats() as usize;
 
-    let [means, log_scales, rotations, raw_opacities, sh_coeffs] = Transaction::default()
+    let [mut means, log_scales, mut rotations, raw_opacities, mut sh_coeffs] = Transaction::default()
         .register(splats.means.val())
         .register(splats.log_scales.val())
         .register(splats.rotations.val())
@@ -143,6 +186,17 @@ pub async fn splat_to_spz<B: Backend>(splats: Splats<B>) -> anyhow::Result<Vec<u
         .collect::<Vec<_>>()
         .try_into()
         .unwrap();
+
+    // Apply up-axis transform if specified
+    // This rotates the splat so that the estimated "up" direction aligns with Y-up
+    if let Some(up) = up_axis {
+        let rotation = up_axis_to_rotation(up);
+        transform_positions(&mut means, rotation);
+        transform_rotations(&mut rotations, rotation);
+        // Rotate SH coefficients using Wigner D-matrix based rotation
+        // The layout is [N, coeffs_per_channel, 3] (interleaved RGB per coefficient)
+        rotate_sh_coefficients_interleaved_in_place(&mut sh_coeffs, sh_degree, rotation);
+    }
 
     // sh_coeffs is [N, coeffs_per_channel, 3] flattened
     // where coeffs_per_channel = (sh_degree + 1)^2
@@ -605,7 +659,7 @@ mod tests {
         let device = burn::backend::ndarray::NdArrayDevice::Cpu;
         let splats = make_test_splats::<burn::backend::NdArray>(true, &device);
 
-        let spz_data = splat_to_spz(splats).await.expect("Failed to save SPZ");
+        let spz_data = splat_to_spz(splats, None).await.expect("Failed to save SPZ");
 
         let (header, decompressed) = parse_spz(&spz_data);
         assert_eq!(header.num_points, 2);
@@ -739,7 +793,7 @@ mod tests {
             &device,
         );
 
-        let spz_data = splat_to_spz(splats).await.expect("Failed to save SPZ");
+        let spz_data = splat_to_spz(splats, None).await.expect("Failed to save SPZ");
         let (header, decompressed) = parse_spz(&spz_data);
 
         assert_eq!(header.num_points, 1);
@@ -985,7 +1039,7 @@ mod tests {
             &device,
         );
 
-        let spz_data = splat_to_spz(splats).await.expect("Failed to save large SPZ");
+        let spz_data = splat_to_spz(splats, None).await.expect("Failed to save large SPZ");
         let (header, decompressed) = parse_spz(&spz_data);
 
         assert_eq!(header.num_points, num_points as u32);
@@ -1075,7 +1129,7 @@ mod tests {
             &device,
         );
 
-        let spz_data = splat_to_spz(splats).await.expect("Failed to save single point SPZ");
+        let spz_data = splat_to_spz(splats, None).await.expect("Failed to save single point SPZ");
         let (header, decompressed) = parse_spz(&spz_data);
 
         assert_eq!(header.num_points, 1);
@@ -1243,7 +1297,7 @@ mod tests {
             &device,
         );
 
-        let spz_data = splat_to_spz(splats).await.expect("Failed to encode SPZ");
+        let spz_data = splat_to_spz(splats, None).await.expect("Failed to encode SPZ");
         let decoded = spz_to_raw(&spz_data).expect("Failed to decode SPZ");
 
         assert_eq!(decoded.num_points, 2);
@@ -1372,7 +1426,7 @@ mod tests {
             &device,
         );
 
-        let spz_data = splat_to_spz(splats).await.expect("Failed to encode SPZ");
+        let spz_data = splat_to_spz(splats, None).await.expect("Failed to encode SPZ");
         let decoded = spz_to_raw(&spz_data).expect("Failed to decode SPZ");
 
         assert_eq!(decoded.num_points, 1);
@@ -1454,7 +1508,7 @@ mod tests {
             &device,
         );
 
-        let spz_data = splat_to_spz(splats).await.expect("Failed to encode SPZ");
+        let spz_data = splat_to_spz(splats, None).await.expect("Failed to encode SPZ");
         let decoded = spz_to_raw(&spz_data).expect("Failed to decode SPZ");
 
         assert_eq!(decoded.num_points, num_points);
@@ -1509,74 +1563,11 @@ mod tests {
             &device,
         );
 
-        let spz_data = splat_to_spz(original).await.expect("Failed to encode SPZ");
+        let spz_data = splat_to_spz(original, None).await.expect("Failed to encode SPZ");
         let reconstructed: Splats<burn::backend::NdArray> =
             spz_to_splat(&spz_data, &device).expect("Failed to decode SPZ");
 
         assert_eq!(reconstructed.num_splats(), 2);
         assert_eq!(reconstructed.sh_degree(), 0);
-    }
-
-    /// Compare two SPZ files and return detailed differences
-    fn compare_spz_files(rust_data: &[u8], reference_data: &[u8]) -> Result<(), String> {
-        // Decompress both files
-        let (rust_header, rust_decompressed) = parse_spz(rust_data);
-        let (ref_header, ref_decompressed) = parse_spz(reference_data);
-        
-        // Compare headers
-        if rust_header.magic != ref_header.magic {
-            return Err(format!("Magic mismatch: rust={:#x}, ref={:#x}", rust_header.magic, ref_header.magic));
-        }
-        if rust_header.version != ref_header.version {
-            return Err(format!("Version mismatch: rust={}, ref={}", rust_header.version, ref_header.version));
-        }
-        if rust_header.num_points != ref_header.num_points {
-            return Err(format!("NumPoints mismatch: rust={}, ref={}", rust_header.num_points, ref_header.num_points));
-        }
-        if rust_header.sh_degree != ref_header.sh_degree {
-            return Err(format!("SH degree mismatch: rust={}, ref={}", rust_header.sh_degree, ref_header.sh_degree));
-        }
-        if rust_header.fractional_bits != ref_header.fractional_bits {
-            return Err(format!("Fractional bits mismatch: rust={}, ref={}", rust_header.fractional_bits, ref_header.fractional_bits));
-        }
-
-        // Compare decompressed content byte-by-byte
-        if rust_decompressed.len() != ref_decompressed.len() {
-            return Err(format!(
-                "Decompressed size mismatch: rust={}, ref={}",
-                rust_decompressed.len(),
-                ref_decompressed.len()
-            ));
-        }
-        
-        // Find first byte mismatch
-        for i in 0..rust_decompressed.len() {
-            if rust_decompressed[i] != ref_decompressed[i] {
-                // Determine which section this byte is in
-                let header_size = 16usize;
-                let num_points = rust_header.num_points as usize;
-                let positions_end = header_size + num_points * 9;
-                let alphas_end = positions_end + num_points;
-                let colors_end = alphas_end + num_points * 3;
-                let scales_end = colors_end + num_points * 3;
-                let rotations_end = scales_end + num_points * 4;
-                
-                let section = if i < header_size { "header" }
-                    else if i < positions_end { "positions" }
-                    else if i < alphas_end { "alphas" }
-                    else if i < colors_end { "colors" }
-                    else if i < scales_end { "scales" }
-                    else if i < rotations_end { "rotations" }
-                    else { "sh_coeffs" };
-                
-                return Err(format!(
-                    "Data mismatch at byte {} (section: {}): rust={:#04x}, ref={:#04x}",
-                    i, section, rust_decompressed[i], ref_decompressed[i]
-                ));
-            }
-        }
-
-        // If we reached here, decompressed content is identical
-        Ok(())
     }
 }

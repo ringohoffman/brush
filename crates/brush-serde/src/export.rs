@@ -2,11 +2,53 @@ use std::vec;
 
 use brush_render::gaussian_splats::Splats;
 use brush_render::sh::sh_coeffs_for_degree;
+use brush_sh_utils::rotate_sh_coefficients_in_place;
 use burn::prelude::Backend;
 use burn::tensor::Transaction;
+use glam::{Quat, Vec3};
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use serde_ply::{SerializeError, SerializeOptions};
+
+/// Computes the rotation quaternion that transforms the scene so the given up_axis
+/// becomes aligned with the Y-up axis (positive Y = up, standard for most viewers).
+/// This rotates the scene's up direction to match the viewer's expected up.
+pub fn up_axis_to_rotation(up_axis: Vec3) -> Quat {
+    Quat::from_rotation_arc(Vec3::Y, up_axis.normalize())
+}
+
+/// Transform raw position data by a rotation quaternion.
+/// `means` is a flat array of [x, y, z, x, y, z, ...]
+fn transform_positions(means: &mut [f32], rotation: Quat) {
+    for chunk in means.chunks_exact_mut(3) {
+        let pos = Vec3::new(chunk[0], chunk[1], chunk[2]);
+        let rotated = rotation * pos;
+        chunk[0] = rotated.x;
+        chunk[1] = rotated.y;
+        chunk[2] = rotated.z;
+    }
+}
+
+/// Transform raw quaternion rotation data by a rotation quaternion.
+/// `rotations` is a flat array of [w, x, y, z, w, x, y, z, ...] (brush format)
+fn transform_rotations(rotations: &mut [f32], rotation: Quat) {
+    for chunk in rotations.chunks_exact_mut(4) {
+        // Brush stores quaternions as [w, x, y, z]
+        let q = Quat::from_xyzw(chunk[1], chunk[2], chunk[3], chunk[0]);
+        let rotated = rotation * q;
+        chunk[0] = rotated.w;
+        chunk[1] = rotated.x;
+        chunk[2] = rotated.y;
+        chunk[3] = rotated.z;
+    }
+}
+
+/// Transform SH coefficients by applying the rotation.
+/// `sh_coeffs` is in layout [N, 3, coeffs_per_channel] flattened.
+/// The rotation is applied to each SH band independently for each RGB channel.
+fn transform_sh_coefficients(sh_coeffs: &mut [f32], sh_degree: u32, rotation: Quat) {
+    rotate_sh_coefficients_in_place(sh_coeffs, sh_degree, rotation);
+}
 
 // Dynamic PLY structure that only includes needed SH coefficients
 #[derive(Debug)]
@@ -70,8 +112,8 @@ struct DynamicPly {
 }
 pub use burn_cubecl::{CubeRuntime, cubecl::Compiler, tensor::CubeTensor};
 
-async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
-    let [means, log_scales, rotations, raw_opacities, sh_coeffs] = Transaction::default()
+async fn read_splat_data<B: Backend>(splats: Splats<B>, up_axis: Option<Vec3>) -> DynamicPly {
+    let [mut means, log_scales, mut rotations, raw_opacities, mut sh_coeffs] = Transaction::default()
         .register(splats.means.val())
         .register(splats.log_scales.val())
         .register(splats.rotations.val())
@@ -85,6 +127,17 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
         .collect::<Vec<_>>()
         .try_into()
         .unwrap();
+
+    // Apply up-axis transform if specified
+    // This rotates the splat so that the estimated "up" direction aligns with Y-up
+    if let Some(up) = up_axis {
+        let rotation = up_axis_to_rotation(up);
+        transform_positions(&mut means, rotation);
+        transform_rotations(&mut rotations, rotation);
+        // Rotate SH coefficients using Wigner D-matrix based rotation
+        // The layout after permute is [N, 3, coeffs_per_channel]
+        transform_sh_coefficients(&mut sh_coeffs, splats.sh_degree(), rotation);
+    }
 
     let sh_coeffs_num = splats.sh_coeffs.dims()[1];
     let sh_degree = splats.sh_degree();
@@ -155,10 +208,18 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
     DynamicPly { vertex: vertices }
 }
 
-pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, SerializeError> {
+/// Export splats to PLY format.
+///
+/// If `up_axis` is provided, the splat will be rotated so that the given up direction
+/// aligns with the Y-up axis. This makes the exported splat appear "upright" in viewers
+/// that use Y-up conventions (which is standard for PLY files).
+pub async fn splat_to_ply<B: Backend>(
+    splats: Splats<B>,
+    up_axis: Option<Vec3>,
+) -> Result<Vec<u8>, SerializeError> {
     let splats = splats.with_normed_rotations();
     let sh_degree = splats.sh_degree();
-    let ply = read_splat_data(splats.clone()).await;
+    let ply = read_splat_data(splats.clone(), up_axis).await;
 
     let comments = vec![
         "Exported from Brush".to_owned(),
@@ -210,7 +271,7 @@ mod tests {
             let splats = create_test_splats(degree);
             assert_eq!(splats.sh_degree(), degree);
 
-            let ply_data = read_splat_data(splats.clone()).await;
+            let ply_data = read_splat_data(splats.clone(), None).await;
             let expected_rest_coeffs = if degree == 0 {
                 0
             } else {
@@ -221,7 +282,7 @@ mod tests {
                 ply_data.vertex[0].rest_coeffs.len(),
                 expected_rest_coeffs as usize
             );
-            assert!(splat_to_ply(splats).await.is_ok());
+            assert!(splat_to_ply(splats, None).await.is_ok());
         }
     }
 
@@ -231,7 +292,7 @@ mod tests {
 
         for (degree, expected_rest_fields) in test_cases {
             let splats = create_test_splats(degree);
-            let ply_bytes = splat_to_ply(splats).await.unwrap();
+            let ply_bytes = splat_to_ply(splats, None).await.unwrap();
             let ply_string = String::from_utf8_lossy(&ply_bytes);
 
             let actual_rest_fields = ply_string.matches("property float f_rest_").count();
@@ -256,7 +317,7 @@ mod tests {
 
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
-            let ply_bytes = splat_to_ply(original_splats.clone())
+            let ply_bytes = splat_to_ply(original_splats.clone(), None)
                 .await
                 .expect("Failed to serialize splats");
 
